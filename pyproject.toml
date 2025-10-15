@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "augmented-lagrangian"
+version = "0.1.0"
+description = "A Python implementation of the Augmented Lagrangian method for constrained optimization"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Hongwei Jin", email = "jinh@anl.gov"}
+]
+maintainers = [
+    {name = "Hongwei Jin", email = "jinh@anl.gov"}
+]
+keywords = ["optimization", "constrained-optimization", "lagrangian", "mathematical-optimization"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "torch",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build",
+    "twine",
+    "pytest",
+    "pytest-cov",
+    "autopep8",
+    "isort",
+    "flake8",
+    "mypy",
+    "sphinx",
+    "sphinx-rtd-theme",
+]
+examples = [
+    "matplotlib",
+    "seaborn"
+]
+
+[project.urls]
+Homepage = "https://github.com/cshjin/augmented-lagrangian"
+Documentation = "https://augmented-lagrangian.readthedocs.io"
+Repository = "https://github.com/cshjin/augmented-lagrangian.git"
+Issues = "https://github.com/cshjin/augmented-lagrangian/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

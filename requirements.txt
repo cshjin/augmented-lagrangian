@@ -1,0 +1,18 @@
+# Core dependencies
+numpy
+scipy
+torch
+
+# Development dependencies
+pytest>=6.0
+pytest-cov
+autopep8
+isort
+flake8
+mypy
+sphinx
+sphinx-rtd-theme
+
+# Example dependencies
+matplotlib
+seaborn
