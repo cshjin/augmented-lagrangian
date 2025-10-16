@@ -16,6 +16,8 @@ import numpy as np
 
 from aug_lag import AugmentedLagrangian
 
+np.set_printoptions(precision=3, suppress=True)
+
 
 def objective_function(x):
     """
@@ -54,14 +56,15 @@ def main():
         objective_func=objective_function,
         constraint_funcs=[constraint1, constraint2],  # List of constraint functions
         mu_0=1.0,
-        tolerance=1e-8,
-        mu_increase_factor=1.5,
+        tolerance=1e-6,
+        rho=1.5,
         max_outer_iterations=50,
         verbose=True
     )
 
     # Initial guess
     x0 = np.array([0.0, 0.0])
+    x0 = np.random.rand(2)
     print(f"\nInitial guess: x0 = {x0}")
 
     # Solve the problem
@@ -69,7 +72,7 @@ def main():
     print("Starting optimization...")
     print("-" * 40)
 
-    result = solver.solve(x0, tolerance=1e-8)
+    result = solver.solve(x0, tolerance=1e-6)
 
     # Display results
     print("\n" + "=" * 40)

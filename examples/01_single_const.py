@@ -52,13 +52,16 @@ def main():
         constraint_funcs=constraint_function,
         mu_0=1.0,                      # Initial penalty parameter
         tolerance=1e-8,                # Convergence tolerance
-        mu_increase_factor=2.0,        # Penalty parameter increase factor
+        rho=2.0,                       # Penalty parameter increase factor
         max_outer_iterations=50,       # Maximum outer iterations
+        max_inner_iterations=2,        # Maximum inner iterations
+        backend="scipy",               # Optimization backend
         verbose=True                   # Print progress
     )
 
     # Initial guess
     x0 = np.array([0.0, 0.0])
+    x0 = np.random.rand(2)
     print(f"\nInitial guess: x0 = {x0}")
 
     # Solve the problem
@@ -66,7 +69,7 @@ def main():
     print("Starting optimization...")
     print("-" * 40)
 
-    result = solver.solve(x0, tolerance=1e-8)
+    result = solver.solve(x0, tolerance=1e-6)
 
     # Display results
     print("\n" + "=" * 40)

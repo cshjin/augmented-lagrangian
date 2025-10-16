@@ -4,6 +4,8 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from scipy.optimize import minimize
 
+np.set_printoptions(precision=3)
+
 
 class AugmentedLagrangian(object):
     """
@@ -21,12 +23,14 @@ class AugmentedLagrangian(object):
                  objective_func=None,
                  constraint_funcs=None,
                  mu_0: float = 1.0,
+                 with_noise: bool = False,
                  tolerance: float = 1e-6,
-                 mu_increase_factor: float = 1.5,
+                 rho: float = 1.5,
                  max_mu: float = 1000.0,
                  constraint_tolerance: float = 1e-4,
                  max_outer_iterations: int = 20,
                  max_inner_iterations: int = 50,
+                 backend: str = "scipy",
                  verbose: bool = True):
         """
         Initialize Augmented Lagrangian solver.
@@ -36,8 +40,9 @@ class AugmentedLagrangian(object):
             constraint_funcs: Single constraint function or list of constraint functions.
                              Each function should return constraint values that should equal 0
             mu_0: Initial penalty parameter
+            with_noise: Whether to add noise to escape stationary points
             tolerance: Convergence tolerance
-            mu_increase_factor: Factor to increase penalty parameter
+            rho: Factor to increase penalty parameter
             max_mu: Maximum penalty parameter value
             constraint_tolerance: Tolerance for constraint satisfaction
             max_outer_iterations: Maximum outer iterations
@@ -51,20 +56,22 @@ class AugmentedLagrangian(object):
 
         # Handle constraint functions - support both single function and list
         if callable(constraint_funcs):
-            self.constraint_func = [constraint_funcs]
+            self.constraint_funcs = [constraint_funcs]
         elif isinstance(constraint_funcs, (list, tuple)):
-            self.constraint_func = list(constraint_funcs)
+            self.constraint_funcs = list(constraint_funcs)
         else:
-            self.constraint_func = constraint_funcs
+            self.constraint_funcs = constraint_funcs
 
         # Algorithm parameters
-        self.mu_0 = mu_0
+        self.mu_0 = np.random.rand() if mu_0 is None else mu_0
+        self.with_noise = with_noise
         self.tolerance = tolerance
-        self.mu_increase_factor = mu_increase_factor
+        self.rho = rho
         self.max_mu = max_mu
         self.constraint_tolerance = constraint_tolerance
         self.max_outer_iterations = max_outer_iterations
         self.max_inner_iterations = max_inner_iterations
+        self.backend = backend
         self.verbose = verbose
 
         # Current algorithm state
@@ -90,11 +97,11 @@ class AugmentedLagrangian(object):
 
         # Handle both single function and list of functions
         if callable(constraint_funcs):
-            self.constraint_func = [constraint_funcs]
+            self.constraint_funcs = [constraint_funcs]
         elif isinstance(constraint_funcs, (list, tuple)):
-            self.constraint_func = list(constraint_funcs)
+            self.constraint_funcs = list(constraint_funcs)
         else:
-            self.constraint_func = constraint_funcs
+            self.constraint_funcs = constraint_funcs
 
     def f(self, x: np.ndarray) -> float:
         """Objective function f(x).
@@ -119,28 +126,26 @@ class AugmentedLagrangian(object):
         Returns:
             Combined constraint values from all constraint functions
         """
-        if self.constraint_func is None:
+        if self.constraint_funcs is None:
             raise NotImplementedError("Constraint function not set. Use set_functions() or override this method.")
 
         # Handle list of constraint functions (always the case after initialization)
-        if isinstance(self.constraint_func, (list, tuple)):
+        if isinstance(self.constraint_funcs, (list, tuple)):
             all_constraints = []
 
-            for i, constraint_fn in enumerate(self.constraint_func):
-                constraint_val = constraint_fn(x)
-
-                # # Convert to array and flatten if needed
-                # if np.isscalar(constraint_val):
-                #     constraint_array = np.array([constraint_val])
-                # else:
-                #     constraint_array = np.array(constraint_val).flatten()
-
-                all_constraints.append(constraint_val)
+            for i, constraint_fn in enumerate(self.constraint_funcs):
+                if callable(constraint_fn):
+                    constraint_val = constraint_fn(x)
+                    # Handle case where constraint function returns multiple constraints
+                    if isinstance(constraint_val, (list, tuple, np.ndarray)):
+                        all_constraints.extend(constraint_val)
+                    else:
+                        all_constraints.append(constraint_val)
 
             return np.array(all_constraints)
 
         # Fallback for single function stored as non-callable (should not occur)
-        return np.array(self.constraint_func(x))
+        return np.array(self.constraint_funcs(x))
 
     def augmented_lagrangian(self, x: np.ndarray) -> float:
         """Compute the augmented Lagrangian function.
@@ -188,7 +193,7 @@ class AugmentedLagrangian(object):
             where ρ > 1 is the increase factor, and μ_{max} is the maximum allowed value.
 
         """
-        self.mu_k = min(self.mu_k * self.mu_increase_factor, self.max_mu)
+        self.mu_k = min(self.mu_k * self.rho, self.max_mu)
 
     def solve(self, x0: np.ndarray, max_outer_iterations: int = 100, tolerance: float = 1e-6) -> dict:
         """
@@ -205,39 +210,49 @@ class AugmentedLagrangian(object):
         x = np.array(x0, dtype=float)
 
         # Initialize constraints to determine dimensions
-        constraints_init = self.c(x)
-        obj_init = self.f(x)
-
-        self.constraint_history.append(constraints_init)
-        self.lambda_history.append(self.lambda_k)
-        self.mu_history.append(self.mu_k)
-        self.objective_history.append(obj_init)
+        const_k = self.c(x)
+        obj_k = self.f(x)
 
         # Handle both scalar and vector constraints
-        if np.isscalar(constraints_init):
+        if np.isscalar(const_k):
             n_constraints = 1
-            constraints_init = np.array([constraints_init])
+            const_k = np.array([const_k])
         else:
-            constraints_init = np.array(constraints_init)
-            n_constraints = len(constraints_init)
+            const_k = np.array(const_k)
+            n_constraints = len(const_k)
+
+        # Store initial values in history
+        self.constraint_history = [const_k]
+        self.lambda_history = [self.lambda_k]
+        self.mu_history = [self.mu_k]
+        self.objective_history = [obj_k]
 
         # Initialize Lagrange multipliers
         if self.lambda_k is None:
             self.lambda_k = np.zeros(n_constraints)
+        elif len(self.lambda_k) != n_constraints:
+            warnings.warn("Dimension of initial lambda does not match number of constraints. Reinitializing to zeros.")
+            self.lambda_k = np.zeros(n_constraints)
+        self.lambda_history = [self.lambda_k]
 
         converged = False
 
-        for iteration in range(max_outer_iterations):
+        for iter in range(max_outer_iterations):
             # Minimize augmented Lagrangian using scipy
             result = minimize(
                 self.augmented_lagrangian,
                 x,
-                method='L-BFGS-B',
+                method='BFGS',
                 options={'maxiter': self.max_inner_iterations,
                          'disp': False}
             )
 
             x = result.x
+
+            if self.with_noise:
+                # Add small random noise to escape stationary points
+                noise = np.random.normal(scale=self.tolerance, size=x.shape)
+                x += noise
 
             # Check convergence
             constraints = self.c(x)
@@ -251,7 +266,12 @@ class AugmentedLagrangian(object):
 
             if self.verbose:
                 obj_val = self.f(x)
-                print(f"Iteration {iteration}: obj={obj_val:.6f}, constraint_violation={constraint_violation:.6f}")
+                x_str = np.array2string(x, precision=3, separator=', ', suppress_small=True)
+                print(f"Iter {iter:<4} |"
+                      f"x_k: {x_str:<15} |"
+                      f"x_norm: {np.linalg.norm(x):>10.3e} |"
+                      f"obj: {obj_val:>10.3e} |"
+                      f"const_vio_norm: {constraint_violation:>10.3e} |")
 
             if constraint_violation < tolerance:
                 converged = True
@@ -269,15 +289,14 @@ class AugmentedLagrangian(object):
             self.mu_history.append(self.mu_k)
             self.objective_history.append(self.f(x))
 
-        return {
-            'x': x,
-            'fun': self.f(x),
-            'success': converged,
-            'objective': self.f(x),
-            'constraint_violation': constraint_violation,
-            'converged': converged,
-            'nit': iteration + 1,
-            'iterations': iteration + 1,
-            'lambda': self.lambda_k,
-            'mu': self.mu_k
-        }
+        return {'x': x,
+                'fun': self.f(x),
+                'success': converged,
+                'objective': self.f(x),
+                'constraint_violation': constraint_violation,
+                'converged': converged,
+                'nit': iter + 1,
+                'iterations': iter + 1,
+                'lambda': self.lambda_k,
+                'mu': self.mu_k
+                }

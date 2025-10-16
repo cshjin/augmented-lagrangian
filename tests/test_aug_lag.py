@@ -122,13 +122,13 @@ class TestAugmentedLagrangian:
         solver = AugmentedLagrangian(
             mu_0=2.0,
             tolerance=1e-8,
-            mu_increase_factor=2.0,
+            rho=2.0,
             max_mu=500.0
         )
 
         assert solver.mu_0 == 2.0
         assert solver.tolerance == 1e-8
-        assert solver.mu_increase_factor == 2.0
+        assert solver.rho == 2.0
         assert solver.max_mu == 500.0
 
     def test_constraint_history_tracking(self):
