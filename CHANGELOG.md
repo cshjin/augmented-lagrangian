@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release of the augmented-lagrangian package
 
+## [0.1.1] - 2025-10-16
+
+### Changed
+- Renamed `mu_increase_factor` parameter to `rho` for clarity in penalty parameter.
+- Flexible handling of constraint functions returning multiple constraints.
+- Added `max_inner_iterations` and `backend` parameters to `solve` method for better control over optimization process.
+
+### Added
+- Support for optional PyTorch backend for optimization.
+- Example scripts demonstrating usage with both SciPy and PyTorch backends.
+- Additional tests for new features and backends.
+
+
 ## [0.1.0] - 2025-10-15
 
 ### Added

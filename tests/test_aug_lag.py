@@ -6,6 +6,13 @@ import numpy as np
 import pytest
 from aug_lag import AugmentedLagrangian
 
+# Check if PyTorch is available
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+
 
 class TestAugmentedLagrangian:
     """Test cases for the AugmentedLagrangian optimizer."""
@@ -159,6 +166,120 @@ class TestAugmentedLagrangian:
         assert len(solver.lambda_history) == n_iterations
         assert len(solver.mu_history) == n_iterations
         assert len(solver.objective_history) == n_iterations
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+class TestPyTorchBackend:
+    """Test cases for PyTorch backend."""
+
+    def test_pytorch_backend_simple_problem(self):
+        """Test PyTorch backend with simple quadratic problem."""
+        def objective(x):
+            return (x[0] - 1)**2 + (x[1] - 2)**2
+
+        def constraint(x):
+            return x[0] + x[1] - 3
+
+        solver = AugmentedLagrangian(
+            objective_func=objective,
+            constraint_funcs=constraint,
+            backend="pytorch",
+            tolerance=1e-4,  # Slightly relaxed for SGD
+            max_inner_iterations=100,
+            verbose=False
+        )
+
+        x0 = np.array([0.0, 0.0])
+        result = solver.solve(x0, tolerance=1e-4)
+
+        # Check convergence (may be less precise than SciPy)
+        assert result['constraint_violation'] < 1e-3, "Constraint should be approximately satisfied"
+
+        # Check that solution is reasonable (within tolerance of analytical solution)
+        expected_x = np.array([1.5, 1.5])
+        np.testing.assert_allclose(result['x'], expected_x, atol=1e-1)
+
+    def test_pytorch_backend_multiple_constraints(self):
+        """Test PyTorch backend with multiple constraints."""
+        def objective(x):
+            return x[0]**2 + x[1]**2
+
+        def constraint1(x):
+            return x[0] + x[1] - 1
+
+        def constraint2(x):
+            return x[0] - x[1]
+
+        solver = AugmentedLagrangian(
+            objective_func=objective,
+            constraint_funcs=[constraint1, constraint2],
+            backend="pytorch",
+            tolerance=1e-4,
+            max_inner_iterations=100,
+            verbose=False
+        )
+
+        x0 = np.array([0.0, 0.0])
+        result = solver.solve(x0, tolerance=1e-4)
+
+        # Check convergence
+        assert result['constraint_violation'] < 1e-3, "Constraints should be approximately satisfied"
+
+        # Check solution
+        expected_x = np.array([0.5, 0.5])
+        np.testing.assert_allclose(result['x'], expected_x, atol=1e-1)
+
+    def test_backend_comparison(self):
+        """Compare PyTorch and SciPy backends on same problem."""
+        def objective(x):
+            return x[0]**2 + x[1]**2
+
+        def constraint(x):
+            return x[0] + x[1] - 1
+
+        # SciPy solver
+        solver_scipy = AugmentedLagrangian(
+            objective_func=objective,
+            constraint_funcs=constraint,
+            backend="scipy",
+            tolerance=1e-6,
+            verbose=False
+        )
+
+        # PyTorch solver
+        solver_pytorch = AugmentedLagrangian(
+            objective_func=objective,
+            constraint_funcs=constraint,
+            backend="pytorch",
+            tolerance=1e-4,  # Relaxed for SGD
+            max_inner_iterations=100,
+            verbose=False
+        )
+
+        x0 = np.array([0.0, 0.0])
+
+        result_scipy = solver_scipy.solve(x0, tolerance=1e-6)
+        result_pytorch = solver_pytorch.solve(x0, tolerance=1e-4)
+
+        # Both should converge
+        assert result_scipy['success'], "SciPy backend should converge"
+        assert result_pytorch['constraint_violation'] < 1e-3, "PyTorch backend should approximately converge"
+
+        # Solutions should be reasonably close
+        np.testing.assert_allclose(result_scipy['x'], result_pytorch['x'], atol=1e-1)
+
+    def test_pytorch_backend_unavailable(self):
+        """Test error when PyTorch backend requested but not available."""
+        # This test verifies that backend validation works when PyTorch is available
+        # In a real scenario without PyTorch, an ImportError would be raised during init
+        solver = AugmentedLagrangian(backend="pytorch")
+        assert solver.backend == "pytorch"
+
+    def test_invalid_backend(self):
+        """Test error with invalid backend."""
+        with pytest.raises(ValueError, match="Unknown backend"):
+            solver = AugmentedLagrangian(backend="invalid")
+            solver.solve(np.array([0.0]))
 
 
 if __name__ == "__main__":

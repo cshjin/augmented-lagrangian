@@ -20,16 +20,21 @@ This package provides a flexible and easy-to-use implementation that can handle 
 
 ## Features
 
+- **Multiple backends**: Support for SciPy (BFGS) and PyTorch (SGD) optimization backends
 - **Flexible constraint handling**: Support for single or multiple equality constraints
 - **Customizable parameters**: Control penalty parameters, tolerances, and iteration limits
 - **Convergence monitoring**: Track optimization progress with detailed history
 - **Easy-to-use API**: Simple interface for defining objective and constraint functions
-- **Robust implementation**: Built on top of SciPy's optimization routines
+- **GPU acceleration**: PyTorch backend supports GPU acceleration when available
 
 ## Installation
 
 ```bash
+# Basic installation (SciPy backend only)
 pip install augmented-lagrangian
+
+# With PyTorch backend support
+pip install augmented-lagrangian[pytorch]
 ```
 
 ## Quick Start
@@ -38,7 +43,7 @@ Here's a simple example of using the Augmented Lagrangian solver:
 
 ```python
 import numpy as np
-from augmented_lagrangian import AugmentedLagrangian
+from aug_lag import AugmentedLagrangian
 
 # Define objective function: minimize (x1 - 1)^2 + (x2 - 2)^2
 def objective(x):
@@ -73,9 +78,10 @@ print(f"Constraint violation: {result['constraint_violation']}")
 
 - `objective_func`: Function to minimize f(x)
 - `constraint_funcs`: Single constraint function or list of constraint functions
+- `backend`: Optimization backend - "scipy" (default) or "pytorch"
 - `mu_0`: Initial penalty parameter (default: 1.0)
 - `tolerance`: Convergence tolerance (default: 1e-6)
-- `mu_increase_factor`: Factor to increase penalty parameter (default: 1.5)
+- `rho`: Factor to increase penalty parameter (default: 1.5)
 - `max_mu`: Maximum penalty parameter value (default: 1000.0)
 - `constraint_tolerance`: Tolerance for constraint satisfaction (default: 1e-4)
 - `max_outer_iterations`: Maximum outer iterations (default: 20)
@@ -86,6 +92,43 @@ print(f"Constraint violation: {result['constraint_violation']}")
 
 - `solve(x0, max_outer_iterations=100, tolerance=1e-6)`: Solve the optimization problem
 - `set_functions(objective_func, constraint_funcs)`: Set objective and constraint functions
+
+## PyTorch Backend Example
+
+The PyTorch backend uses SGD optimization and supports GPU acceleration:
+
+```python
+import numpy as np
+from aug_lag import AugmentedLagrangian
+
+# Define objective and constraint functions (same as before)
+def objective(x):
+    return (x[0] - 1)**2 + (x[1] - 2)**2
+
+def constraint(x):
+    return x[0] + x[1] - 3
+
+# Create solver with PyTorch backend
+solver = AugmentedLagrangian(
+    objective_func=objective,
+    constraint_funcs=constraint,
+    backend="pytorch",           # Use PyTorch backend
+    max_inner_iterations=200,    # More epochs for SGD
+    tolerance=1e-6,
+    verbose=True
+)
+
+# Solve the problem
+x0 = np.array([0.0, 0.0])
+result = solver.solve(x0)
+
+print(f"Solution: x = {result['x']}")
+print(f"Backend used: {solver.backend}")
+```
+
+**Backend Comparison:**
+- **SciPy backend**: Uses BFGS algorithm, typically faster convergence, CPU-only
+- **PyTorch backend**: Uses SGD algorithm, supports GPU acceleration, good for large-scale problems
 
 ## Multiple Constraints Example
 

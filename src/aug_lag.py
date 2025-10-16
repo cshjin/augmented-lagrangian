@@ -4,6 +4,15 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from scipy.optimize import minimize
 
+# Optional PyTorch import
+try:
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+
 np.set_printoptions(precision=3)
 
 
@@ -78,6 +87,11 @@ class AugmentedLagrangian(object):
         self.mu_k = mu_0
         self.lambda_k = None  # Lagrange multipliers
         self.outer_iteration = 0
+
+        # Validate backend
+        if backend == "pytorch" and not TORCH_AVAILABLE:
+            raise ImportError("PyTorch backend requested but PyTorch is not installed. "
+                              "Install with: pip install torch")
 
         # Constraint tracking
         self.constraint_history = []
@@ -195,6 +209,215 @@ class AugmentedLagrangian(object):
         """
         self.mu_k = min(self.mu_k * self.rho, self.max_mu)
 
+    def _solve_pytorch(self, x0: np.ndarray, max_outer_iterations: int, tolerance: float) -> dict:
+        """
+        PyTorch backend for solving the augmented Lagrangian subproblem.
+
+        Args:
+            x0: Initial guess
+            max_outer_iterations: Maximum outer iterations
+            tolerance: Convergence tolerance
+
+        Returns:
+            Dictionary with solution results
+        """
+        if not TORCH_AVAILABLE:
+            raise ImportError("PyTorch is not available")
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        # Convert initial guess to torch tensor
+        x = torch.tensor(x0.copy(), dtype=torch.float32, device=device, requires_grad=True)
+
+        # Initialize constraints to determine dimensions
+        with torch.no_grad():
+            x_np = x.detach().cpu().numpy()
+            const_k = self.c(x_np)
+            obj_k = self.f(x_np)
+
+        # Handle both scalar and vector constraints
+        if np.isscalar(const_k):
+            n_constraints = 1
+            const_k = np.array([const_k])
+        else:
+            const_k = np.array(const_k)
+            n_constraints = len(const_k)
+
+        # Store initial values in history
+        self.constraint_history = [const_k]
+        self.lambda_history = [self.lambda_k]
+        self.mu_history = [self.mu_k]
+        self.objective_history = [obj_k]
+
+        # Initialize Lagrange multipliers
+        if self.lambda_k is None:
+            self.lambda_k = np.zeros(n_constraints)
+        elif len(self.lambda_k) != n_constraints:
+            warnings.warn("Dimension of initial lambda does not match number of constraints. Reinitializing to zeros.")
+            self.lambda_k = np.zeros(n_constraints)
+
+        self.lambda_history = [self.lambda_k.copy()]
+
+        converged = False
+
+        for iter in range(max_outer_iterations):
+            # Create fresh tensor for this iteration
+            x = torch.tensor(x.detach().cpu().numpy(), dtype=torch.float32, device=device, requires_grad=True)
+
+            # Adaptive learning rate based on penalty parameter
+            base_lr = 0.01
+            lr = min(base_lr / max(1.0, self.mu_k / 10.0), 0.001)
+
+            # Create optimizer with adaptive learning rate
+            optimizer = optim.SGD([x], lr=lr)
+
+            # Inner optimization loop (PyTorch epochs)
+            best_loss = float('inf')
+            patience = 10
+            no_improve_count = 0
+
+            for epoch in range(self.max_inner_iterations):
+                optimizer.zero_grad()
+
+                # Convert to numpy for function evaluation (since user functions expect numpy)
+                x_np = x.detach().cpu().numpy()
+
+                # Compute objective and constraints
+                try:
+                    obj_val = self.f(x_np)
+                    constraints = self.c(x_np)
+
+                    if np.isscalar(constraints):
+                        constraints = np.array([constraints])
+                    else:
+                        constraints = np.array(constraints)
+
+                    # Compute augmented Lagrangian
+                    lagrangian_term = -np.dot(self.lambda_k, constraints)
+                    penalty_term = 0.5 * self.mu_k * np.sum(constraints**2)
+                    current_loss = obj_val + lagrangian_term + penalty_term
+
+                    # Convert to torch tensor for backpropagation
+                    loss_tensor = torch.tensor(current_loss, dtype=torch.float32, device=device)
+
+                    # Compute gradients using autograd with finite differences
+                    # This is more stable than the previous implementation
+                    eps = 1e-5
+                    grad = torch.zeros_like(x)
+
+                    for i in range(len(x)):
+                        # Forward difference
+                        x_plus = x.clone()
+                        x_plus[i] += eps
+                        x_plus_np = x_plus.detach().cpu().numpy()
+
+                        obj_plus = self.f(x_plus_np)
+                        const_plus = self.c(x_plus_np)
+                        if np.isscalar(const_plus):
+                            const_plus = np.array([const_plus])
+
+                        al_plus = obj_plus - np.dot(self.lambda_k, const_plus) + 0.5 * self.mu_k * np.sum(const_plus**2)
+
+                        # Backward difference
+                        x_minus = x.clone()
+                        x_minus[i] -= eps
+                        x_minus_np = x_minus.detach().cpu().numpy()
+
+                        obj_minus = self.f(x_minus_np)
+                        const_minus = self.c(x_minus_np)
+                        if np.isscalar(const_minus):
+                            const_minus = np.array([const_minus])
+
+                        al_minus = obj_minus - np.dot(self.lambda_k, const_minus) + 0.5 * \
+                            self.mu_k * np.sum(const_minus**2)
+
+                        # Central difference for better numerical stability
+                        grad[i] = (al_plus - al_minus) / (2 * eps)
+
+                    # Clip gradients to prevent explosion
+                    grad = torch.clamp(grad, -1.0, 1.0)
+
+                    # Set gradients manually
+                    x.grad = grad
+
+                    # Optimization step
+                    optimizer.step()
+
+                    # Early stopping based on loss improvement
+                    if current_loss < best_loss - 1e-8:
+                        best_loss = current_loss
+                        no_improve_count = 0
+                    else:
+                        no_improve_count += 1
+
+                    if no_improve_count >= patience:
+                        break
+
+                except Exception as e:
+                    # If optimization fails, break and use current x
+                    if self.verbose:
+                        print(f"Warning: Exception in inner optimization: {e}")
+                    break
+
+            # Add noise if requested (but with smaller scale to avoid instability)
+            if self.with_noise:
+                noise_scale = min(self.tolerance * 0.1, 1e-4)
+                noise = torch.normal(mean=0, std=noise_scale, size=x.shape, device=device)
+                x = x + noise
+
+            # Check convergence
+            x_np = x.detach().cpu().numpy()
+            constraints = self.c(x_np)
+
+            if np.isscalar(constraints):
+                constraints = np.array([constraints])
+            else:
+                constraints = np.array(constraints)
+
+            constraint_violation = np.linalg.norm(constraints)
+
+            if self.verbose:
+                obj_val = self.f(x_np)
+                x_str = np.array2string(x_np, precision=3, separator=', ', suppress_small=True)
+                print(f"Iter {iter:<4} |"
+                      f"x_k: {x_str:<15} |"
+                      f"x_norm: {np.linalg.norm(x_np):>10.3e} |"
+                      f"obj: {obj_val:>10.3e} |"
+                      f"const_vio_norm: {constraint_violation:>10.3e} |")
+
+            if constraint_violation < tolerance:
+                converged = True
+                break
+
+            # Update Lagrange multipliers: λ := λ - μ * c(x)
+            self.lambda_k = self.lambda_k - self.mu_k * constraints
+
+            # Update penalty parameter more conservatively for PyTorch
+            # Use smaller increase factor to avoid instability
+            conservative_rho = min(self.rho, 1.2)  # Cap the increase factor
+            self.mu_k = min(self.mu_k * conservative_rho, self.max_mu)
+
+            self.constraint_history.append(constraints)
+            self.lambda_history.append(self.lambda_k.copy())
+            self.mu_history.append(self.mu_k)
+            self.objective_history.append(self.f(x_np))
+
+        # Convert final result back to numpy
+        x_final = x.detach().cpu().numpy()
+
+        return {
+            'x': x_final,
+            'fun': self.f(x_final),
+            'success': converged,
+            'objective': self.f(x_final),
+            'constraint_violation': constraint_violation,
+            'converged': converged,
+            'nit': iter + 1,
+            'iterations': iter + 1,
+            'lambda': self.lambda_k,
+            'mu': self.mu_k
+        }
+
     def solve(self, x0: np.ndarray, max_outer_iterations: int = 100, tolerance: float = 1e-6) -> dict:
         """
         Solve the constrained optimization problem using augmented Lagrangian method.
@@ -203,6 +426,25 @@ class AugmentedLagrangian(object):
             x0: Initial guess for variables
             max_outer_iterations: Maximum number of outer iterations
             tolerance: Convergence tolerance for constraint violation
+
+        Returns:
+            Dictionary with solution results
+        """
+        if self.backend == "pytorch":
+            return self._solve_pytorch(x0, max_outer_iterations, tolerance)
+        elif self.backend == "scipy":
+            return self._solve_scipy(x0, max_outer_iterations, tolerance)
+        else:
+            raise ValueError(f"Unknown backend: {self.backend}. Supported backends: 'scipy', 'pytorch'")
+
+    def _solve_scipy(self, x0: np.ndarray, max_outer_iterations: int, tolerance: float) -> dict:
+        """
+        SciPy backend for solving the augmented Lagrangian subproblem.
+
+        Args:
+            x0: Initial guess
+            max_outer_iterations: Maximum outer iterations
+            tolerance: Convergence tolerance
 
         Returns:
             Dictionary with solution results

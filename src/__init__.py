@@ -7,7 +7,7 @@ for solving equality-constrained optimization problems.
 
 from .aug_lag import AugmentedLagrangian
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "Hongwei Jin"
 __email__ = "jinh@anl.gov"
 
